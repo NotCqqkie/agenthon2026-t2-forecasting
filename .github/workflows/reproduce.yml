@@ -1,0 +1,40 @@
+name: reproduce
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FINAL_IMAGE: ghcr.io/notcqqkie/qfr-b@sha256:4195d2b76f9a86295481ad226a6e47d3e491fa1f1853784905b1752b6b77c667
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - uses: actions/checkout@v4
+        with:
+          repository: Agenthon-2026/track2-forecasting-public
+          ref: 3b51e16b3f7c0fa0e56bcba323c2bb5e81b8bd56
+          path: t2
+      - name: Build from source and pull the Final image
+        run: |
+          docker build -q -t t2-source:local src
+          docker pull -q "$FINAL_IMAGE"
+      - name: Run both images on every public unit and compare every output file
+        run: |
+          set -e
+          for u in t2/units/*/; do
+            id=$(basename "$u")
+            src/scripts/run_unit.sh t2-source:local "$u" "outs/source/$id"
+            src/scripts/run_unit.sh "$FINAL_IMAGE" "$u" "outs/final/$id"
+          done
+          python3 - <<'PY'
+          import hashlib, os
+          h = lambda d: {f: hashlib.sha256(open(f'{d}/{f}', 'rb').read()).hexdigest() for f in sorted(os.listdir(d))}
+          units = sorted(os.listdir('outs/final'))
+          bad = [u for u in units if h(f'outs/source/{u}') != h(f'outs/final/{u}')]
+          print(f'units {len(units)}  identical {len(units) - len(bad)}  mismatch {bad}')
+          assert units and not bad
+          PY
